@@ -179,3 +179,53 @@ def replacements(req: ReplacementRequest) -> dict:
             "message": "Replacement suppliers found.",
         }
     )
+
+
+@app.get("/api/incident/{recall_id}")
+def incident(recall_id: int) -> dict:
+    """Live incident snapshot for the dashboard.
+
+    Returns only the data-backed fields; the frontend merges these over its
+    static layout/copy. Core field groups: recall, incident, stats,
+    store_status, chains, suspects. (retail/facilities tables are a
+    fast-follow.)
+    """
+    recall = queries.get_recall(recall_id)
+    if recall is None:
+        raise HTTPException(status_code=404, detail=f"recall {recall_id} not found")
+
+    lot_ids = queries.affected_lot_ids_for_recall(recall)
+    received = queries.store_ids_that_received(lot_ids)
+    stores = queries.all_stores()
+
+    # incident header fields (title/summary copy composed on the frontend)
+    created = recall.get("created_at")
+    incident_block = {
+        "id": f"DEMO-E{recall['id']:02d}",
+        "activeSince": created.strftime("%H:%M") if created else None,
+        "pathogen": recall.get("pathogen"),
+        "product_name": recall.get("product_name"),
+    }
+
+    # per-store received flags, merged by id on the frontend
+    store_status = [{"id": s["id"], "received": s["id"] in received} for s in stores]
+
+    # chains: stores grouped by chain
+    chains_map: dict[str, list] = {}
+    for s in stores:
+        chains_map.setdefault(s["chain"] or "Unknown", []).append(
+            {"id": s["id"], "city": s["city"]}
+        )
+    chains = [{"name": name, "stores": members} for name, members in chains_map.items()]
+
+    return _jsonable(
+        {
+            "recall": recall,
+            "incident": incident_block,
+            "affected_lot_ids": lot_ids,
+            "stats": queries.incident_stats(lot_ids),
+            "store_status": store_status,
+            "chains": chains,
+            "suspects": queries.incident_suspects(lot_ids),
+        }
+    )
