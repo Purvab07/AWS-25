@@ -1,1 +1,15 @@
 /.kiro
+/mock_data
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# AWS SAM
+.aws-sam/
+
+# Local env / secrets
+.env
+*.pgpass
