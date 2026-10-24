@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Incident console · Regulator view (demo)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <!-- Header -->
+    <header id="header" class="header"></header>
+
+    <!-- Incident banner -->
+    <section id="banner" class="banner"></section>
+
+    <!-- KPI stat cards -->
+    <section id="stats" class="stats"></section>
+    <section id="stat-wide" class="stat-wide-wrap"></section>
+
+    <!-- Two-column: map (left) + investigation (right) -->
+    <section class="grid-main">
+      <div class="panel" style="padding:18px 20px">
+        <div class="map-head">
+          <span class="eyebrow">Regional supply map</span>
+          <div class="map-filters" id="map-filters"></div>
+        </div>
+        <div class="map" id="map"></div>
+        <div class="map-key" id="map-key"></div>
+      </div>
+
+      <div id="investigation"></div>
+    </section>
+
+    <!-- Retail customers table -->
+    <section class="panel" style="padding:18px 20px; margin-top:16px" id="retail"></section>
+
+    <!-- Producers & facilities table -->
+    <section class="panel" style="padding:18px 20px; margin-top:16px" id="facilities"></section>
+
+    <!-- Event timeline -->
+    <section class="panel timeline" id="timeline"></section>
+
+    <!-- Send notifications -->
+    <section class="panel notify" id="notify"></section>
+
+    <!-- Footnote -->
+    <footer id="footnote" class="footnote"></footer>
+  </main>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
