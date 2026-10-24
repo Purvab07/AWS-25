@@ -1,15 +1,35 @@
-/.kiro
-/mock_data
-.DS_Store
+# Kiro
+.kiro/
 
 # Python
-.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
 
-# AWS SAM
-.aws-sam/
+# Virtual environment
+.venv/
+venv/
 
-# Local env / secrets
+# Environment variables / secrets
 .env
-*.pgpass
+.env.*
+!.env.example
+
+# AWS
+.aws/
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Testing/cache
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
