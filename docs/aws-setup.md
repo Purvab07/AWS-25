@@ -68,9 +68,33 @@ return both DEMO Farm A and DEMO Farm B.
 
 ## Bedrock
 
-- Region `us-east-1` has model access, including
-  `anthropic.claude-haiku-4-5-20251001-v1:0` (good fit for recall extraction
-  and product-similarity scoring).
+- Model: `us.amazon.nova-2-lite-v1:0`, region `us-east-1`. Verified working via
+  the Converse API. Region and model id are hardcoded in
+  `backend/ai_automation/bedrock_client.py`.
+- Auth uses ambient boto3 credentials, so the backend must run in a shell that
+  has the Workshop `export AWS_...` block loaded.
+
+## Backend API (Phase A)
+
+FastAPI layer in `backend/api/` exposing two live endpoints backed by RDS +
+Bedrock. Run from the repo root in a shell that has BOTH `DATABASE_URL` and the
+AWS `export` block loaded:
+
+```zsh
+.venv/bin/pip install -r backend/api/requirements.txt   # first time only
+.venv/bin/uvicorn backend.api.app:app --reload --port 8000
+```
+
+Endpoints:
+
+- `GET /health` — DB connectivity check.
+- `GET /api/traceback/{lot_id}` — recursive farm-origin traceback + receiving
+  stores. (Lot 3 returns 2 origin farms and 18 stores.)
+- `POST /api/replacements` — body `{"recalled_product_id": int, "quantity_needed": int}`.
+  Returns a ranked replacement supplier. Same-product/different-supplier
+  candidates are auto-matched in the API layer (Bedrock rejects the recalled
+  product as its own replacement); genuinely different products go to the
+  Bedrock engine.
 
 ## Teardown (when done, to stop any billing)
 
