@@ -1,6 +1,9 @@
 # Kiro
 .kiro/
 
+# Data
+/mock_data
+
 # Python
 __pycache__/
 *.py[cod]
