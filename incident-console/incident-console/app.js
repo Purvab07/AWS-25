@@ -405,6 +405,75 @@ document.addEventListener("click", (e) => {
   if (trg) toast(trg.dataset.toast);
 });
 
+// --- Live data (Phase B) --------------------------------------------------
+// Fetch the live incident snapshot from the backend API and overlay it onto
+// the static DATA object. Map layout (x/y coords) and editorial copy stay
+// static; only data-backed fields are overwritten. If the API is unreachable,
+// the dashboard falls back to the hardcoded DATA (offline-safe).
+const API_BASE = "http://localhost:8000";
+const INCIDENT_ID = 1;
+
+async function loadLive() {
+  let live;
+  try {
+    const res = await fetch(`${API_BASE}/api/incident/${INCIDENT_ID}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    live = await res.json();
+  } catch (err) {
+    console.warn("Live data unavailable, using static DATA:", err.message);
+    return false; // graceful fallback
+  }
+  mergeLive(live);
+  return true;
+}
+
+function mergeLive(live) {
+  // --- incident id + active-since (keep curated title/summary) -------------
+  if (live.incident) {
+    if (live.incident.id) DATA.incident.id = live.incident.id;
+    if (live.incident.activeSince)
+      DATA.incident.activeSince = live.incident.activeSince;
+  }
+
+  // --- stat card values, matched by label keyword -------------------------
+  // Static labels/tones are kept; only the numeric value is overlaid for the
+  // cards we have live figures for.
+  const s = live.stats || {};
+  const setStat = (match, value, detail) => {
+    const card = DATA.stats.find((c) => c.label.toLowerCase().includes(match));
+    if (card && value != null) {
+      card.value = String(value);
+      if (detail) card.detail = detail;
+    }
+  };
+  setStat("stores tracked", s.stores_tracked,
+    `${s.stores_received} received the recalled lot · ${DATA.chains.length} chains`);
+  setStat("producers", s.producers);
+  setStat("illness", s.linked_cases,
+    `${s.lab_positive} lab-positive · linked by store visit`);
+
+  // --- store received flags, merged by id ---------------------------------
+  if (Array.isArray(live.store_status)) {
+    const recv = new Map(live.store_status.map((x) => [x.id, x.received]));
+    DATA.stores.forEach((st) => {
+      if (recv.has(st.id)) st.received = recv.get(st.id);
+    });
+  }
+
+  // --- chains: replace wholesale (same shape) -----------------------------
+  if (Array.isArray(live.chains) && live.chains.length) {
+    DATA.chains = live.chains.map((c) => ({
+      name: `${c.name} · ${c.stores.length} stores`,
+      stores: c.stores,
+    }));
+  }
+
+  // --- mark that live data is in use (small UI signal) --------------------
+  DATA._live = true;
+}
+
 // --- Boot -----------------------------------------------------------------
 function main() {
   renderHeader();
@@ -419,4 +488,9 @@ function main() {
   renderNotifications();
   renderFootnote();
 }
-document.addEventListener("DOMContentLoaded", main);
+
+async function boot() {
+  await loadLive(); // overlay live data if the API is reachable
+  main();
+}
+document.addEventListener("DOMContentLoaded", boot);
