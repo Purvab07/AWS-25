@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 import psycopg2
+from psycopg2 import pool as _pg_pool
 
 
 def _conn_params_from_secret(secret_arn: str) -> dict:
@@ -53,17 +55,107 @@ def _conn_params_from_env() -> dict:
     }
 
 
-def get_connection():
-    """Return a new psycopg2 connection using resolved parameters.
+def _connect_kwargs():
+    """Resolve how to connect: a DSN string or a params dict.
 
-    Caller owns the connection lifecycle (commit/rollback/close).
+    Returns (args, kwargs) suitable for psycopg2 connect calls.
     """
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
-        return psycopg2.connect(database_url)
+        return (database_url,), {}
 
     secret_arn = os.environ.get("DB_SECRET_ARN")
     if secret_arn:
-        return psycopg2.connect(**_conn_params_from_secret(secret_arn))
+        return (), _conn_params_from_secret(secret_arn)
 
-    return psycopg2.connect(**_conn_params_from_env())
+    return (), _conn_params_from_env()
+
+
+# --- connection pool --------------------------------------------------------
+# Opening a fresh connection to a remote RDS instance costs ~0.5s (TCP + TLS +
+# auth). The API opens many connections per request, so without pooling a
+# single page load spent several seconds just on handshakes. A small pool keeps
+# connections warm and reused across requests.
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool():
+    """Lazily build (once) and return the shared connection pool."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:  # double-checked under the lock
+                args, kwargs = _connect_kwargs()
+                _pool = _pg_pool.ThreadedConnectionPool(1, 10, *args, **kwargs)
+    return _pool
+
+
+class _PooledConnection:
+    """Proxy over a pooled psycopg2 connection.
+
+    Delegates everything to the real connection, except close(): that returns
+    the connection to the pool instead of tearing down the socket. This lets
+    existing callers keep their `conn = get_connection(); ...; conn.close()`
+    pattern unchanged while actually reusing connections.
+    """
+
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+        self._returned = False
+
+    def close(self):
+        if self._returned:
+            return
+        self._returned = True
+        try:
+            if not self._conn.closed:
+                # Roll back any open transaction so a reused connection never
+                # carries leftover state to the next caller.
+                self._conn.rollback()
+            self._pool.putconn(self._conn)
+        except Exception:
+            # If returning cleanly fails, drop the connection from the pool.
+            try:
+                self._pool.putconn(self._conn, close=True)
+            except Exception:
+                pass
+
+    def __getattr__(self, name):
+        # Delegate attribute access (cursor, commit, rollback, ...) to the conn.
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self._conn.__enter__()
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._conn.__exit__(exc_type, exc, tb)
+
+
+def get_connection():
+    """Return a pooled database connection.
+
+    Callers keep the same lifecycle (commit/rollback, then close()); close()
+    returns the connection to the pool rather than closing the socket.
+
+    Dead connections (e.g. idle-dropped by RDS) are detected and replaced so a
+    stale pooled connection never surfaces to the caller.
+    """
+    pool = _get_pool()
+    conn = pool.getconn()
+
+    # Cheap liveness check only: if psycopg2 already knows the socket is closed
+    # (e.g. RDS dropped an idle connection), swap it for a fresh one. We do NOT
+    # issue a round-trip query here — that would add remote latency to every
+    # checkout and defeat the pool. A genuinely dead-but-"open" connection will
+    # surface an error on first use, which callers already handle.
+    if conn.closed:
+        try:
+            pool.putconn(conn, close=True)
+        except Exception:
+            pass
+        conn = pool.getconn()
+
+    return _PooledConnection(pool, conn)

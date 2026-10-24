@@ -75,7 +75,7 @@ fi
 # --- start servers ------------------------------------------------------
 # API in the background; frontend in the foreground. Ctrl-C stops both.
 echo "-- starting API on :$API_PORT --"
-./.venv/bin/uvicorn backend.api.app:app --port "$API_PORT" &
+./.venv/bin/uvicorn backend.api.app:app --reload --port "$API_PORT" &
 API_PID=$!
 
 cleanup() {

@@ -44,6 +44,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- simple in-memory TTL cache --------------------------------------------
+# The incident snapshot is effectively static between page loads but costs a
+# few seconds to compute (many sequential round-trips to a remote RDS). Caching
+# it makes every load after the first near-instant. TTL keeps it fresh enough
+# that DB changes still show up within a short window.
+import time as _time  # noqa: E402
+
+_CACHE_TTL_SECONDS = 60
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cache_get(key: str):
+    hit = _cache.get(key)
+    if hit and (_time.time() - hit[0]) < _CACHE_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
+def _cache_put(key: str, value: Any):
+    _cache[key] = (_time.time(), value)
+
 
 def _jsonable(value: Any) -> Any:
     """Convert DB types (Decimal, date/datetime) into JSON-friendly values."""
@@ -189,7 +210,14 @@ def incident(recall_id: int) -> dict:
     static layout/copy. Core field groups: recall, incident, stats,
     store_status, chains, suspects. (retail/facilities tables are a
     fast-follow.)
+
+    Cached in-memory with a short TTL so repeated page loads are instant.
     """
+    cache_key = f"incident:{recall_id}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     recall = queries.get_recall(recall_id)
     if recall is None:
         raise HTTPException(status_code=404, detail=f"recall {recall_id} not found")
@@ -231,7 +259,7 @@ def incident(recall_id: int) -> dict:
 
     suspects = queries.incident_suspects(lot_ids)
 
-    return _jsonable(
+    payload = _jsonable(
         {
             "recall": recall,
             "incident": incident_block,
@@ -253,3 +281,5 @@ def incident(recall_id: int) -> dict:
             ],
         }
     )
+    _cache_put(cache_key, payload)
+    return payload
