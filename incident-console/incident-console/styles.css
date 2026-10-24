@@ -355,3 +355,26 @@ textarea {
   .stats { grid-template-columns: 1fr 1fr; }
   .header { flex-direction: column; }
 }
+
+/* --- Leaflet dark-theme overrides --- */
+.map .leaflet-container { background: #0a1526; border-radius: var(--radius); }
+/* Darken the OSM raster tiles only (not markers/popups) to get a dark map
+   without a keyed basemap provider. */
+.map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9) saturate(0.6);
+}
+.map .leaflet-popup-content-wrapper,
+.map .leaflet-popup-tip {
+  background: #16263f; color: #e6edf6;
+  border: 1px solid #1e3250; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+.map .leaflet-popup-content { font-size: 12.5px; line-height: 1.5; }
+.map .leaflet-control-attribution {
+  background: rgba(10,18,32,0.85); color: var(--text-faint);
+}
+.map .leaflet-control-attribution a { color: var(--text-dim); }
+.map .leaflet-control-zoom a {
+  background: rgba(10,18,32,0.9); color: var(--text);
+  border-color: #1e3250;
+}
+.map .leaflet-control-zoom a:hover { background: #16263f; }

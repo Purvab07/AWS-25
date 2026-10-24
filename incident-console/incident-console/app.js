@@ -135,9 +135,12 @@ function renderMap() {
   const map = L.map(mapEl, { zoomControl: true, scrollWheelZoom: true });
   _leafletMap = map;
 
+  // Keyless OpenStreetMap tiles, darkened via CSS filter (see styles.css
+  // .map .leaflet-tile-pane) so no gated/keyed basemap provider is needed.
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
   // --- layer groups keyed to the filter chip names ------------------------
