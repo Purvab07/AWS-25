@@ -92,86 +92,118 @@ const HIGHWAYS = [
   { n: "17", x: 40, y: 96 }, { n: "80", x: 62, y: 36 },
 ];
 
+// Real interactive map (Leaflet + OpenStreetMap). Uses live lat/lng from the
+// API (DATA._geo). Falls back to a simple message if Leaflet or geo data is
+// unavailable (offline / API down).
+let _leafletMap = null;
+const _mapLayers = {}; // group name -> L.layerGroup
+
+function circleMarker(lat, lng, color, radius, popup) {
+  const m = L.circleMarker([lat, lng], {
+    radius,
+    color: "#0a1526",
+    weight: 1,
+    fillColor: color,
+    fillOpacity: 0.9,
+  });
+  if (popup) m.bindPopup(popup);
+  return m;
+}
+
 function renderMap() {
+  // Filter chips (same UI; now toggle Leaflet layers)
   $("#map-filters").innerHTML = DATA.mapFilters
     .map((f) => `<button class="chip active" data-filter="${f}">${f}</button>`)
     .join("");
 
-  const map = $("#map");
-  // base svg (schematic coastline + bay)
-  map.innerHTML = `
-    <svg class="geo" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="land" x1="0" x2="1">
-          <stop offset="0" stop-color="#15263f"/><stop offset="1" stop-color="#112036"/>
-        </linearGradient>
-      </defs>
-      <path d="M30,0 L100,0 L100,100 L40,100 L44,88 L36,78 L40,66 L30,60 L34,50 L28,40 L34,30 L26,22 L32,10 Z"
-            fill="url(#land)" stroke="#20374f" stroke-width="0.4"/>
-      <path d="M34,50 L40,55 L42,64 L38,72 L44,78 L40,88 L44,100"
-            fill="none" stroke="#1b3352" stroke-width="0.5" opacity="0.8"/>
-      <g stroke="#27496e" stroke-width="0.35" opacity="0.6" fill="none">
-        <path d="M10,42 L30,55 L46,60 L62,70"/>
-        <path d="M18,82 L46,60 L62,36"/>
-        <path d="M60,70 L62,76 L42,92 L40,96"/>
-      </g>
-    </svg>
-    <div class="trace-layer" id="trace-layer"></div>
-    <div class="ocean-label">PACIFIC OCEAN</div>
-    <div class="map-zoom">
-      <button data-toast="Zoom in (demo)">+</button>
-      <button data-toast="Zoom out (demo)">−</button>
-      <button class="fit" data-toast="Fit to view (demo)">Fit</button>
-    </div>`;
+  const geo = DATA._geo;
+  const haveLeaflet = typeof L !== "undefined";
+  const haveGeo = geo && geo.stores && geo.stores.some((s) => s.lat != null);
 
-  // trace lines (SVG overlay, percentage coords)
-  const packer = DATA.producers.find((p) => p.id === "PK");
-  const traceTargets = DATA.stores.filter((s) => s.received).slice(0, 10);
-  const traceSvg = `<svg class="geo" viewBox="0 0 100 100" preserveAspectRatio="none" style="z-index:1">
-    ${traceTargets
-      .map(
-        (t) =>
-          `<line x1="${packer.x}" y1="${packer.y}" x2="${t.x}" y2="${t.y}" stroke="#ff4d5e" stroke-width="0.25" opacity="0.4"/>`
-      )
-      .join("")}
-    <line x1="13" y1="34" x2="${packer.x}" y2="${packer.y}" stroke="#f5c518" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.6"/>
-    <line x1="37" y1="42" x2="${packer.x}" y2="${packer.y}" stroke="#f5c518" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.6"/>
-  </svg>`;
-  $("#trace-layer").innerHTML = traceSvg;
+  if (!haveLeaflet || !haveGeo) {
+    $("#map").innerHTML =
+      `<div style="padding:24px;color:var(--text-dim);font-size:13px">` +
+      `Map unavailable (live location data or map library not loaded).</div>`;
+    wireMapFilters();
+    return;
+  }
 
-  // city + highway labels
-  CITY_LABELS.forEach((c) => {
-    const n = el("div", "city-label", c.name);
-    n.style.left = c.x + "%"; n.style.top = c.y + "%";
-    map.appendChild(n);
-  });
-  HIGHWAYS.forEach((h) => {
-    const n = el("div", "hwy", h.n);
-    n.style.left = h.x + "%"; n.style.top = h.y + "%";
-    map.appendChild(n);
+  // (Re)create the Leaflet map on the #map div.
+  const mapEl = $("#map");
+  mapEl.innerHTML = "";
+  if (_leafletMap) { _leafletMap.remove(); _leafletMap = null; }
+  const map = L.map(mapEl, { zoomControl: true, scrollWheelZoom: true });
+  _leafletMap = map;
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+
+  // --- layer groups keyed to the filter chip names ------------------------
+  const stores = L.layerGroup();
+  const producers = L.layerGroup();
+  const illness = L.layerGroup();
+  const trace = L.layerGroup();
+  _mapLayers["Stores"] = stores;
+  _mapLayers["Producers"] = producers;
+  _mapLayers["Illness reports"] = illness;
+  _mapLayers["Trace lines"] = trace;
+
+  const bounds = [];
+
+  // Store markers: red = received the recalled lot, grey = did not.
+  geo.stores.forEach((s) => {
+    if (s.lat == null || s.lng == null) return;
+    const color = s.received ? "#ff4d5e" : "#5b6b84";
+    const popup =
+      `<b>${s.name || "Store " + s.id}</b><br>${s.chain || ""} · ${s.city || ""}` +
+      `<br>${s.received ? "Received the recalled lot" : "Did not receive the lot"}`;
+    circleMarker(s.lat, s.lng, color, 7, popup).addTo(stores);
+    bounds.push([s.lat, s.lng]);
   });
 
-  // store markers
-  DATA.stores.forEach((s) => {
-    const n = el("div", `marker store ${s.received ? "recv" : "norecv"}`, String(s.id));
-    n.style.left = s.x + "%"; n.style.top = s.y + "%";
-    n.dataset.group = "Stores";
-    n.title = `Store ${s.id} — ${s.received ? "received recalled lot" : "did not receive lot"}`;
-    map.appendChild(n);
+  // Producer markers: farms + the blending facility.
+  const prodColor = { farm: "#f5c518", packer: "#8b5cf6", processor: "#8b5cf6", distributor: "#38bdf8" };
+  geo.producers.forEach((p) => {
+    if (p.lat == null || p.lng == null) return;
+    const color = prodColor[p.kind] || "#f5c518";
+    const popup = `<b>${p.name}</b><br>${p.kind} · ${p.city || ""}`;
+    circleMarker(p.lat, p.lng, color, 9, popup).addTo(producers);
+    bounds.push([p.lat, p.lng]);
   });
 
-  // producer / facility / illness markers
-  DATA.producers.forEach((p) => {
-    const group = p.kind === "illness" ? "Illness reports" : "Producers";
-    let cls = "marker ";
-    if (p.kind === "illness") cls += "illness";
-    else cls += `facility ${p.kind}`;
-    const n = el("div", cls, p.id);
-    n.style.left = p.x + "%"; n.style.top = p.y + "%";
-    n.dataset.group = group;
-    if (p.callout) n.appendChild(el("div", "callout", "DEMO Farm A · investigate"));
-    map.appendChild(n);
+  // Illness case markers (if any have coordinates).
+  (geo.cases || []).forEach((c) => {
+    if (c.lat == null || c.lng == null) return;
+    circleMarker(c.lat, c.lng, "#fb923c", 6,
+      `<b>Illness report</b><br>${c.city || ""} · ${c.pathogen || "unknown"}`).addTo(illness);
+    bounds.push([c.lat, c.lng]);
   });
+
+  // Trace lines: from each producer to the stores that received the lot.
+  const receivedStores = geo.stores.filter((s) => s.received && s.lat != null);
+  geo.producers
+    .filter((p) => p.kind !== "farm" && p.lat != null)
+    .forEach((p) => {
+      receivedStores.forEach((s) => {
+        L.polyline([[p.lat, p.lng], [s.lat, s.lng]], {
+          color: "#ff4d5e", weight: 1, opacity: 0.25,
+        }).addTo(trace);
+      });
+    });
+
+  // All layers on by default (matches all-active chips).
+  stores.addTo(map);
+  producers.addTo(map);
+  illness.addTo(map);
+  trace.addTo(map);
+
+  if (bounds.length) {
+    map.fitBounds(bounds, { padding: [30, 30] });
+  } else {
+    map.setView([37.8, -122.3], 9); // Bay Area fallback
+  }
 
   wireMapFilters();
 }
@@ -185,15 +217,19 @@ function wireMapFilters() {
     });
   });
 }
+
 function applyMapFilters() {
+  if (!_leafletMap) return;
   const active = new Set(
     [...$("#map-filters").querySelectorAll(".chip.active")].map((c) => c.dataset.filter)
   );
-  document.querySelectorAll("#map .marker").forEach((m) => {
-    m.style.display = active.has(m.dataset.group) ? "" : "none";
+  Object.entries(_mapLayers).forEach(([name, layer]) => {
+    if (active.has(name)) {
+      if (!_leafletMap.hasLayer(layer)) layer.addTo(_leafletMap);
+    } else if (_leafletMap.hasLayer(layer)) {
+      _leafletMap.removeLayer(layer);
+    }
   });
-  const tl = $("#trace-layer");
-  if (tl) tl.style.display = active.has("Trace lines") ? "" : "none";
 }
 
 // --- Map key --------------------------------------------------------------
@@ -469,6 +505,13 @@ function mergeLive(live) {
       stores: c.stores,
     }));
   }
+
+  // --- geo data for the real map (stores/producers/cases with lat/lng) ----
+  DATA._geo = {
+    stores: live.store_status || [],
+    producers: live.producers || [],
+    cases: live.cases || [],
+  };
 
   // --- mark that live data is in use (small UI signal) --------------------
   DATA._live = true;
