@@ -266,12 +266,91 @@ def affected_lot_ids_for_recall(recall: dict) -> list[int]:
 
 
 def all_stores() -> list[dict]:
-    """Every store (for store_status and chain grouping)."""
+    """Every store with coordinates (for the map, status, and chain grouping)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, chain, city, state FROM stores ORDER BY id"
+                """
+                SELECT id, name, chain, city, state, latitude, longitude
+                FROM stores ORDER BY id
+                """
+            )
+            return _rows_as_dicts(cur)
+    finally:
+        conn.close()
+
+
+def producer_coords(suspects: list[dict]) -> list[dict]:
+    """Map pins for suspect producers: farms + facilities with coordinates.
+
+    Takes the suspect entities (from incident_suspects, which includes every
+    contributing farm via backward trace plus the blending facility) and looks
+    up their lat/long so they can be plotted.
+    """
+    if not suspects:
+        return []
+    farm_ids = [s["entity_id"] for s in suspects if s["entity_type"] == "farm"]
+    fac_ids = [s["entity_id"] for s in suspects if s["entity_type"] == "facility"]
+
+    pins: list[dict] = []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if farm_ids:
+                cur.execute(
+                    """
+                    SELECT id, name, city, latitude, longitude, 'farm' AS kind
+                    FROM farms WHERE id = ANY(%s)
+                    """,
+                    (farm_ids,),
+                )
+                pins.extend(_rows_as_dicts(cur))
+            if fac_ids:
+                cur.execute(
+                    """
+                    SELECT id, name, city, latitude, longitude, type::text AS kind
+                    FROM facilities WHERE id = ANY(%s)
+                    """,
+                    (fac_ids,),
+                )
+                pins.extend(_rows_as_dicts(cur))
+    finally:
+        conn.close()
+
+    return [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "city": p["city"],
+            "kind": p["kind"],
+            "lat": p["latitude"],
+            "lng": p["longitude"],
+        }
+        for p in pins
+    ]
+
+
+def incident_cases(lot_ids: list[int]) -> list[dict]:
+    """Illness cases linked to stores that received affected lots, with coords.
+
+    Cases carry their own lat/long. Returned for optional illness pins.
+    """
+    if not lot_ids:
+        return []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT c.id, c.city, c.latitude, c.longitude, c.pathogen
+                FROM cases c
+                JOIN case_exposures ce ON ce.case_id = c.id
+                JOIN shipments s
+                  ON s.to_store_id = ce.store_id AND s.lot_id = ANY(%s)
+                WHERE c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+                """,
+                (lot_ids,),
             )
             return _rows_as_dicts(cur)
     finally:

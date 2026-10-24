@@ -207,8 +207,19 @@ def incident(recall_id: int) -> dict:
         "product_name": recall.get("product_name"),
     }
 
-    # per-store received flags, merged by id on the frontend
-    store_status = [{"id": s["id"], "received": s["id"] in received} for s in stores]
+    # per-store status WITH coordinates (for the real map)
+    store_status = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "chain": s["chain"],
+            "city": s["city"],
+            "lat": s["latitude"],
+            "lng": s["longitude"],
+            "received": s["id"] in received,
+        }
+        for s in stores
+    ]
 
     # chains: stores grouped by chain
     chains_map: dict[str, list] = {}
@@ -218,6 +229,8 @@ def incident(recall_id: int) -> dict:
         )
     chains = [{"name": name, "stores": members} for name, members in chains_map.items()]
 
+    suspects = queries.incident_suspects(lot_ids)
+
     return _jsonable(
         {
             "recall": recall,
@@ -226,6 +239,17 @@ def incident(recall_id: int) -> dict:
             "stats": queries.incident_stats(lot_ids),
             "store_status": store_status,
             "chains": chains,
-            "suspects": queries.incident_suspects(lot_ids),
+            "suspects": suspects,
+            "producers": queries.producer_coords(suspects),
+            "cases": [
+                {
+                    "id": c["id"],
+                    "city": c["city"],
+                    "lat": c["latitude"],
+                    "lng": c["longitude"],
+                    "pathogen": c["pathogen"],
+                }
+                for c in queries.incident_cases(lot_ids)
+            ],
         }
     )
